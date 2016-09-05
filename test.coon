@@ -1,0 +1,11 @@
+let a = 2
+let b = 3
+let c = a + b
+
+
+fn foo(a: str, b: num) -> num {
+  b += 2
+  let c = b * 3
+  a *= b
+  c
+}
