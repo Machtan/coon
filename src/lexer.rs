@@ -1,15 +1,16 @@
 use std::iter::{Iterator, Peekable};
 use std::str::CharIndices;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum Kw {
     Let,
+    Mut,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum TokenData<'a> {
     Keyword(Kw),
-    Var(&'a str),
+    Identifier(&'a str),
     Number(&'a str),
     Whitespace,
     Newline,
@@ -48,16 +49,16 @@ impl<'a> TokenData<'a> {
         use self::TokenData::*;
         match text {
             "let" => Keyword(Kw::Let),
-            _ => Var(text),
+            _ => Identifier(text),
         }
     }
 }
 
 #[derive(Debug)]
 pub struct Token<'a> {
-    start: usize,
-    len: usize,
-    data: TokenData<'a>,
+    pub start: usize,
+    pub len: usize,
+    pub data: TokenData<'a>,
 }
 
 impl<'a> Token<'a> {
@@ -78,10 +79,10 @@ pub enum LexerErrorKind {
 
 #[derive(Debug)]
 pub struct LexerError<'a> {
-    kind: LexerErrorKind,
-    start: usize,
-    pos: usize,
-    source: &'a str,
+    pub kind: LexerErrorKind,
+    pub start: usize,
+    pub pos: usize,
+    pub source: &'a str,
 }
 
 impl<'a> LexerError<'a> {
@@ -165,7 +166,7 @@ impl<'a> Lexer<'a> {
     }
     
     fn read_identifier(&mut self) -> LexerResult<'a> {
-        while let Some(&(i, ch)) = self.chars.peek() {
+        while let Some(&(_, ch)) = self.chars.peek() {
             match ch {
                 'a'...'z' | 'A' ... 'Z' | '_' | '0'...'9' => {
                     self.chars.next();
@@ -177,7 +178,7 @@ impl<'a> Lexer<'a> {
     }
     
     fn read_whitespace(&mut self) -> LexerResult<'a> {
-        while let Some(&(i, ch)) = self.chars.peek() {
+        while let Some(&(_, ch)) = self.chars.peek() {
             if ch == '\r' || ch == '\n' {
                 break;
             } else if ch.is_whitespace() {
@@ -252,7 +253,7 @@ impl<'a> Iterator for Lexer<'a> {
                     self.read_number(false)
                 }
                 '.' => {
-                    if let Some(&(i, ch)) = self.chars.peek() {
+                    if let Some(&(_, ch)) = self.chars.peek() {
                         match ch {
                             '0' ... '9' => {
                                 self.read_number(true)
@@ -270,7 +271,7 @@ impl<'a> Iterator for Lexer<'a> {
                 '&' => self.eat_if_next('&', And, BinAnd),
                 '+' => self.eat_if_next('=', PlusEq, Plus),
                 '-' => {
-                    if let Some(&(i, ch)) = self.chars.peek() {
+                    if let Some(&(_, ch)) = self.chars.peek() {
                         match ch {
                             '>' => {
                                 self.chars.next();
