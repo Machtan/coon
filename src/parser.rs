@@ -1,19 +1,31 @@
 
 use lexer::{Token, Lexer, LexerError, lex};
+use std::iter::Peekable;
 use debug;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Acc<'a> {
     Var(&'a str),
     Index(Box<Acc<'a>>, Box<Expression<'a>>),
     Member(Vec<&'a str>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expression<'a> {
     Number(&'a str),
     Access(Acc<'a>),
     BinOp(Box<Expression<'a>>, &'a str, Box<Expression<'a>>),
+    UnMinus(Box<Expression<'a>>),
+}
+
+impl<'a> Expression<'a> {
+    pub fn var(text: &'a str) -> Expression<'a> {
+        Expression::Access(Acc::Var(text))
+    }
+    
+    pub fn num(val: &'a str) -> Expression<'a> {
+        Expression::Number(val)
+    }
 }
 
 #[derive(Debug)]
@@ -33,6 +45,7 @@ pub enum ParseErrorKind<'a> {
     LexerError(LexerError<'a>),
     InvalidSyntax(Token<'a>),
     UnfinishedStatement { start: usize },
+    MissingExpression { start: usize },
 }
 
 #[derive(Debug)]
@@ -65,6 +78,11 @@ impl<'a> ParseError<'a> {
                 println!("Unfinished statement starting at {}:{} :", line, col);
                 debug::show_unclosed(self.source, start);
             }
+            MissingExpression { start } => {
+                let (line, col) = debug::get_position(self.source, start);
+                println!("Expected expression starting at {}:{} :", line, col);
+                debug::show_unclosed(self.source, start);
+            }
         }
     }
 }
@@ -79,7 +97,7 @@ pub type ParseResult<'a, T> = Result<T, ParseError<'a>>;
 
 struct Parser<'a> {
     text: &'a str,
-    tokens: Lexer<'a>,
+    tokens: Peekable<Lexer<'a>>,
     ast: Ast<'a>,
 }
 
@@ -92,30 +110,110 @@ enum LetParseState<'a> {
     AfterType { mut_: bool, var: &'a str, type_: Option<&'a str>},
 }
 
-#[derive(Debug, Clone, Copy)]
-enum ExprParseState {
-    Empty
+#[derive(Debug)]
+enum ExprScope {
+    Free,
+    Paren,
+    Bracket,
+}
+
+#[derive(Debug, Clone)]
+enum ExprParseState<'a> {
+    SEmpty { c_minus: usize },
+    SSingle { val: Expression<'a> }
 }
 
 impl<'a> Parser<'a> {
     pub fn new(text: &'a str) -> Parser<'a> {
         Parser {
             text: text,
-            tokens: lex(text),
+            tokens: lex(text).peekable(),
             ast: Vec::new(),
         }
     }
     
-    fn parse_expr(&mut self) -> ParseResult<'a, Expression<'a>>{
-        use self::ExprParseState::*;
-        let mut state = Empty;
+    fn parse_single_expr(&mut self, start: usize) -> ParseResult<'a, Expression<'a>> {
+        use self::ParseErrorKind::*;
+        use lexer::TokenData::*;
+        let mut minus_count = 0;
+        let mut wrap = |mut val, mut mc| {
+            while mc > 0 {
+                val = Expression::UnMinus(Box::new(val));
+                mc -= 1;
+            }
+            val
+        };
         while let Some(token) = self.tokens.next() {
-            
+            let token = token?;
+            match token.data {
+                Whitespace => continue,
+                Minus => minus_count += 1,
+                Number(val) => {
+                    return Ok(wrap(Expression::num(val), minus_count));
+                }
+                Identifier(val) => {
+                    return Ok(wrap(Expression::var(val), minus_count));
+                }
+                _ => unimplemented!(),
+            }
+        }
+        self.error(MissingExpression { start: start })
+    }
+    
+    fn parse_expr(&mut self, start: usize) -> ParseResult<'a, Expression<'a>> {
+        self.parse_single_expr(start)
+        /*use self::ExprParseState::*;
+        use self::ParseErrorKind::*;
+        use self::ExprScope::*;
+        use lexer::TokenData::*;
+        let mut state = SEmpty { c_minus: 0 };
+        while let Some(token) = self.tokens.next() {
+            let token = token?;
+            state = match (state.clone(), token.data) {
+                (SEmpty { c_minus }, Whitespace) => continue,
+                (SEmpty { c_minus }, Minus) => SEmpty { c_minus: c_minus + 1},
+                (SEmpty { mut c_minus }, Number(val)) => {
+                    let mut val = Expression::num(val);
+                    while c_minus > 0 {
+                        val = Expression::UnMinus(Box::new(val));
+                        c_minus -= 1;
+                    }
+                    SSingle { val: val }
+                }
+                (SEmpty { mut c_minus }, Identifier(val)) => {
+                    let mut val = match self.tokens.peek() {
+                        Some(&Ok(Token{ data: BracketOpen, ..})) => {
+                            unimplemented!(); // read access
+                        },
+                        Some(&Ok(Token{ data: Dot, ..})) => {
+                            unimplemented!(); // read member
+                        }
+                        Some(&Ok(Token{ data: ParenOpen, ..})) => {
+                            unimplemented!(); // read call
+                        }
+                        _ => Expression::var(val),
+                    };
+                    while c_minus > 0 {
+                        val = Expression::UnMinus(Box::new(val));
+                        c_minus -= 1;
+                    }
+                    SSingle { val: val }
+                }
+                (SSingle { .. }, Whitespace) => continue,
+                (SSingle { val }, Newline) => {
+                    return Ok(val);
+                }
+                _ => {
+                    println!("Error: parse_expr: (state: {:?})", state);
+                    return self.error(InvalidSyntax(token));
+                }
+            }
         }
         match state {
-            Empty => unimplemented!(),
+            SEmpty { c_minus } => self.error(MissingExpression{ start: start }),
+            SSingle { val } => Ok(val),
             //_ => unimplemented!(),
-        }
+        }*/
     }
     
     #[inline]
@@ -154,7 +252,7 @@ impl<'a> Parser<'a> {
                     AfterColon { mut_: mut_, var: var }
                 }
                 (AfterVar { mut_, var }, Eq) => {
-                    let expr = self.parse_expr()?;
+                    let expr = self.parse_expr(token.start + token.len)?;
                     let statement = Statement::Let {
                         mut_: mut_, var: var, type_: None, value: Some(expr)
                     };
@@ -172,7 +270,7 @@ impl<'a> Parser<'a> {
                     AfterType { mut_: mut_, var: var, type_: Some(type_)}
                 }
                 (AfterType { mut_, var, type_ }, Eq) => {
-                    let expr = self.parse_expr()?;
+                    let expr = self.parse_expr(token.start + token.len)?;
                     let statement = Statement::Let {
                         mut_: mut_, var: var, type_: type_, value: Some(expr)
                     };
