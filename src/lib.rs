@@ -1,4 +1,5 @@
 #![feature(question_mark)]
+#![feature(conservative_impl_trait)]
 
 mod debug;
 pub mod lexer;

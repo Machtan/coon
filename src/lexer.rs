@@ -1,4 +1,4 @@
-use std::iter::{Iterator, Peekable};
+use std::iter::{Iterator, Peekable, Filter};
 use std::str::CharIndices;
 
 #[derive(Debug, Clone, Copy)]
@@ -42,6 +42,8 @@ pub enum TokenData<'a> {
     ParenClose,
     BracketOpen,
     BracketClose,
+    
+    Eoi,
 }
 
 impl<'a> TokenData<'a> {
@@ -228,7 +230,7 @@ impl<'a> Iterator for Lexer<'a> {
         use self::TokenData::*;
         use self::LexerErrorKind::*;
         if self.finished {
-            return None;
+            return Some(self.eat_token(Eoi));
         }
         if let Some((i, ch)) = self.chars.next() {
             Some(match ch {
@@ -304,12 +306,47 @@ impl<'a> Iterator for Lexer<'a> {
             })
         } else {
             self.finished = true;
-            None
+            Some(self.eat_token(Eoi))
         }
+    }
+}
+
+pub struct FLexer<'a> {
+    lexer: Lexer<'a>,
+}
+
+impl<'a> FLexer<'a> {
+    fn new(text: &'a str) -> FLexer<'a> {
+        FLexer {
+            lexer: Lexer::new(text)
+        }
+    }
+}
+
+impl<'a> Iterator for FLexer<'a> {
+    type Item = LexerResult<'a>;
+    
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(item) = self.lexer.next() {
+            if let Ok(token) = item {
+                if let TokenData::Whitespace = token.data {
+                    continue;
+                } else {
+                    return Some(Ok(token));
+                }
+            } else {
+                return Some(item);
+            }
+        }
+        unreachable!();
     }
 }
 
 
 pub fn lex(text: &str) -> Lexer {
     Lexer::new(text)
+}
+
+pub fn lex_without_whitespace(text: &str) -> FLexer {
+    FLexer::new(text)
 }
